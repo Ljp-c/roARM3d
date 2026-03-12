@@ -1,10 +1,10 @@
-import { useRef, useState, useMemo, useCallback } from "react";
+import { useRef, useState, useMemo, useCallback, useEffect } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { OrbitControls, Grid, Line, Html } from "@react-three/drei";
 import * as THREE from "three";
 import {
   Plus, RotateCw, Link2, Settings, ChevronDown, ChevronRight,
-  Grip, Box, CircleDot, Trash2, Download, Upload, Eye
+  Grip, Box, CircleDot, Trash2, Download, Upload, Eye, Save, FolderOpen, X
 } from "lucide-react";
 
 // ─── 类型定义 ──────────────────────────────────────────────────────────────────
@@ -35,6 +35,15 @@ interface ArmConfig {
   parts: Part[];
   selectedPartId: string | null;
 }
+
+interface SavedConfig {
+  id: string;
+  name: string;
+  timestamp: number;
+  config: ArmConfig;
+}
+
+const STORAGE_KEY = "robot-arm-saved-configs";
 
 // ─── 常量 ──────────────────────────────────────────────────────────────────────
 const PART_COLORS: Record<PartType, string> = {
@@ -283,6 +292,52 @@ export default function App() {
   const [showLinks, setShowLinks] = useState(true);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // ── 保存的配置管理 ──────────────────────────────────────────────────────────
+  const [savedConfigs, setSavedConfigs] = useState<SavedConfig[]>(() => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      return stored ? JSON.parse(stored) : [];
+    } catch { return []; }
+  });
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [saveName, setSaveName] = useState("");
+  const [showSavedList, setShowSavedList] = useState(false);
+
+  // 保存配置到 localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(savedConfigs));
+    } catch { /* ignore */ }
+  }, [savedConfigs]);
+
+  const saveCurrentConfig = useCallback(() => {
+    if (!saveName.trim()) return alert("请输入配置名称");
+    const newSaved: SavedConfig = {
+      id: `saved-${Date.now()}`,
+      name: saveName.trim(),
+      timestamp: Date.now(),
+      config: { ...config, selectedPartId: null },
+    };
+    setSavedConfigs((prev) => [newSaved, ...prev]);
+    setSaveName("");
+    setShowSaveDialog(false);
+  }, [config, saveName]);
+
+  const loadSavedConfig = useCallback((saved: SavedConfig) => {
+    // 重置 idCounter 避免 ID 冲突
+    const maxId = saved.config.parts.reduce((max, p) => {
+      const num = parseInt(p.id.split("-")[1] || "0", 10);
+      return Math.max(max, num);
+    }, 0);
+    idCounter = maxId;
+    setConfig(saved.config);
+    setShowSavedList(false);
+  }, []);
+
+  const deleteSavedConfig = useCallback((id: string) => {
+    setSavedConfigs((prev) => prev.filter((s) => s.id !== id));
+  }, []);
 
   const selected = useMemo(
     () => config.parts.find((p) => p.id === config.selectedPartId) || null,
@@ -434,11 +489,116 @@ export default function App() {
           <button onClick={() => addPart("gripper")} disabled={!config.selectedPartId} className="h-8 w-8 rounded-lg border border-slate-200 bg-white text-slate-600 flex items-center justify-center hover:bg-slate-50 disabled:opacity-40" title="添加夹爪"><Grip className="h-4 w-4" /></button>
           <div className="mx-1 h-5 w-px bg-slate-200" />
           <button onClick={() => setShowLinks(!showLinks)} className={`h-8 w-8 rounded-lg border flex items-center justify-center ${showLinks ? "border-violet-300 bg-violet-50 text-violet-700" : "border-slate-200 bg-white text-slate-600"}`} title="显示/隐藏连接线"><Eye className="h-4 w-4" /></button>
+          <div className="mx-1 h-5 w-px bg-slate-200" />
+          {/* 保存/加载按钮 */}
+          <button onClick={() => setShowSaveDialog(true)} className="h-8 px-3 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 flex items-center justify-center gap-1.5 hover:bg-emerald-100 text-[12px] font-medium" title="保存当前配置">
+            <Save className="h-3.5 w-3.5" />保存
+          </button>
+          <button onClick={() => setShowSavedList(!showSavedList)} className={`h-8 px-3 rounded-lg border flex items-center justify-center gap-1.5 text-[12px] font-medium ${showSavedList ? "border-violet-400 bg-violet-100 text-violet-700" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`} title="查看已保存配置">
+            <FolderOpen className="h-3.5 w-3.5" />
+            已保存
+            {savedConfigs.length > 0 && <span className="ml-0.5 bg-violet-500 text-white text-[10px] rounded-full px-1.5">{savedConfigs.length}</span>}
+          </button>
+          <div className="mx-1 h-5 w-px bg-slate-200" />
           <button onClick={() => fileInputRef.current?.click()} className="h-8 w-8 rounded-lg border border-slate-200 bg-white text-slate-600 flex items-center justify-center hover:bg-slate-50" title="导入配置"><Upload className="h-4 w-4" /></button>
           <button onClick={exportConfig} className="h-8 w-8 rounded-lg border border-slate-200 bg-white text-slate-600 flex items-center justify-center hover:bg-slate-50" title="导出配置"><Download className="h-4 w-4" /></button>
           <input ref={fileInputRef} type="file" accept=".json" className="hidden" onChange={importConfig} />
         </div>
       </header>
+
+      {/* ── 保存对话框 ── */}
+      {showSaveDialog && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowSaveDialog(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-[360px] overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+              <h3 className="text-[15px] font-semibold text-slate-800">保存机械臂配置</h3>
+              <button onClick={() => setShowSaveDialog(false)} className="p-1 rounded-lg hover:bg-slate-100">
+                <X className="h-4 w-4 text-slate-500" />
+              </button>
+            </div>
+            <div className="p-5">
+              <label className="text-[12px] text-slate-600 block mb-2">配置名称</label>
+              <input
+                type="text"
+                value={saveName}
+                onChange={(e) => setSaveName(e.target.value)}
+                placeholder="例如：六轴机械臂-v1"
+                className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-[13px] focus:outline-none focus:border-violet-400"
+                autoFocus
+                onKeyDown={(e) => e.key === "Enter" && saveCurrentConfig()}
+              />
+              <div className="flex gap-2 mt-4">
+                <button onClick={() => setShowSaveDialog(false)} className="flex-1 rounded-xl border border-slate-200 py-2.5 text-[13px] font-medium text-slate-600 hover:bg-slate-50">
+                  取消
+                </button>
+                <button onClick={saveCurrentConfig} className="flex-1 rounded-xl bg-emerald-500 py-2.5 text-[13px] font-medium text-white hover:bg-emerald-600">
+                  保存
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── 已保存配置列表 ── */}
+      {showSavedList && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowSavedList(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-[480px] max-h-[70vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+              <h3 className="text-[15px] font-semibold text-slate-800">已保存的配置</h3>
+              <button onClick={() => setShowSavedList(false)} className="p-1 rounded-lg hover:bg-slate-100">
+                <X className="h-4 w-4 text-slate-500" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto p-3">
+              {savedConfigs.length === 0 ? (
+                <div className="text-center py-12">
+                  <FolderOpen className="h-12 w-12 text-slate-300 mx-auto mb-3" />
+                  <p className="text-[13px] text-slate-500">暂无保存的配置</p>
+                  <p className="text-[11px] text-slate-400 mt-1">点击"保存"按钮保存当前机械臂设计</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {savedConfigs.map((saved) => (
+                    <div key={saved.id} className="flex items-center gap-3 p-3 rounded-xl border border-slate-200 hover:border-violet-300 hover:bg-violet-50/50 transition-colors group">
+                      <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-violet-100 to-indigo-100 flex items-center justify-center">
+                        <Grip className="h-5 w-5 text-violet-600" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h4 className="text-[13px] font-semibold text-slate-800 truncate">{saved.name}</h4>
+                        <p className="text-[11px] text-slate-400">
+                          {new Date(saved.timestamp).toLocaleString("zh-CN")} · {saved.config.parts.length} 个部件
+                        </p>
+                      </div>
+                      <div className="flex gap-1.5">
+                        <button
+                          onClick={() => loadSavedConfig(saved)}
+                          className="px-3 py-1.5 rounded-lg bg-violet-500 text-white text-[11px] font-medium hover:bg-violet-600"
+                        >
+                          加载
+                        </button>
+                        <button
+                          onClick={() => deleteSavedConfig(saved.id)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            {savedConfigs.length > 0 && (
+              <div className="border-t border-slate-200 px-5 py-3 bg-slate-50">
+                <p className="text-[11px] text-slate-500 text-center">
+                  共 {savedConfigs.length} 个保存的配置 · 数据存储在浏览器本地
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="flex flex-1 overflow-hidden">
         {/* ── Left Panel: 部件结构树 ── */}
