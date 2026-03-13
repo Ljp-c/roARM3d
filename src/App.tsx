@@ -6,6 +6,10 @@ import {
   Plus, RotateCw, Link2, Settings, ChevronDown, ChevronRight,
   Grip, Box, CircleDot, Trash2, Download, Upload, Eye, Save, FolderOpen, X
 } from "lucide-react";
+import { SerialControlPanel } from "./components/SerialControlPanel";
+import { SerialBindingPanel } from "./components/SerialBindingPanel";
+import { useSerialData, mapSerialDataToJoints } from "./utils/useSerialData";
+import { SerialBindings } from "./types/serial";
 
 // ─── 类型定义 ──────────────────────────────────────────────────────────────────
 type PartType = "base" | "joint" | "gripper";
@@ -287,6 +291,41 @@ export default function App() {
         },
       ],
     };
+  });
+
+  // 串口绑定状态
+  const [serialBindings, setSerialBindings] = useState<SerialBindings>(() => {
+    const joints = config.parts.filter(p => p.type === "joint");
+    const bindings: SerialBindings = {};
+    joints.forEach((joint, index) => {
+      bindings[joint.id] = `J${index + 1}`;
+    });
+    return bindings;
+  });
+
+  // 处理串口数据
+  const handleSerialData = useCallback(
+    (data: Record<string, number>) => {
+      const jointUpdates = mapSerialDataToJoints(data, serialBindings);
+      
+      setConfig(prev => ({
+        ...prev,
+        parts: prev.parts.map(part => {
+          if (jointUpdates[part.id] !== undefined) {
+            const angle = Math.max(0, Math.min(180, jointUpdates[part.id]));
+            return { ...part, rotation: [angle, 0, 0] };
+          }
+          return part;
+        }),
+      }));
+    },
+    [serialBindings]
+  );
+
+  // 使用串口 Hook
+  const { status: serialStatus } = useSerialData({
+    enabled: true,
+    onDataParsed: handleSerialData,
   });
 
   const [showLinks, setShowLinks] = useState(true);
@@ -603,6 +642,16 @@ export default function App() {
       <div className="flex flex-1 overflow-hidden">
         {/* ── Left Panel: 部件结构树 ── */}
         <aside className="w-[270px] border-r border-slate-200 bg-white flex flex-col">
+          {/* 串口控制面板 */}
+          <SerialControlPanel />
+          
+          {/* 串口绑定面板 */}
+          <SerialBindingPanel 
+            parts={config.parts} 
+            serialBindings={serialBindings}
+            onBindingChange={setSerialBindings}
+          />
+          
           <div className="border-b border-slate-200 p-3">
             <h2 className="text-[13px] font-semibold text-slate-700 flex items-center gap-2">
               <Box className="h-4 w-4" />部件结构
